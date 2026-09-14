@@ -136,7 +136,8 @@ fn format_relative(int: i32) -> String {
     match int {
         0 => "+0".to_owned(),
         i if i > 0 => format!("+{i}"),
-        _ => format!("-{int}"),
+        // negative values already carry their own `-`, and `i32::MIN.abs()` would overflow
+        i => i.to_string(),
     }
 }
 fn format_special_workspace_ident(opt: &Option<String>) -> String {
@@ -182,7 +183,7 @@ pub enum Dispatch {
     FocusMonitor(MonitorIdentifier),
     /// move the focus to a workspace (2. = on_current_monitor)
     #[display(
-        "hl.dsp.focus({{ {} {}}})",
+        "hl.dsp.focus({{ {}{}}})",
         format_string_field("workspace", &_0.to_string()),
         format_bool_field("on_current_monitor", *_1)
     )]
@@ -191,10 +192,10 @@ pub enum Dispatch {
     #[display("hl.dsp.focus({{ {}}})", format_string_field("window", &_0.to_string()))]
     FocusWindow(WindowIdentifier),
     /// move the focus to an urgent, or last window
-    #[display("hl.dsp.focus({{ urgent_or_last }})")]
+    #[display("hl.dsp.focus({{ {}}})", format_bool_field("urgent_or_last", true))]
     FocusUrgentOrLast,
     /// move the focus to the last window
-    #[display("hl.dsp.focus({{ last }})")]
+    #[display("hl.dsp.focus({{ {}}})", format_bool_field("last", true))]
     FocusLast,
     /// quit Hyprland. It’s recommended to use hyprshutdown instead of this.
     #[display("hl.dsp.exit()")]
@@ -287,4 +288,34 @@ mod windows {
         // ...
     }
     impl ToDispatch for Dispatch {}
+}
+
+#[test]
+fn test_format_relative() {
+    assert_eq!(format_relative(0), "+0");
+    assert_eq!(format_relative(3), "+3");
+    assert_eq!(format_relative(-3), "-3");
+    assert_eq!(format_relative(i32::MIN), "-2147483648");
+}
+
+#[test]
+fn test_dispatchers() {
+    let dispatchers = vec![
+        (
+            Dispatch::FocusWorkspace(WorkspaceIdentifier::Relative(-3), false),
+            r#"hl.dsp.focus({ workspace = "-3", on_current_monitor = false, })"#,
+        ),
+        (
+            Dispatch::FocusWorkspace(WorkspaceIdentifier::RelativeOnMonitor(-3), true),
+            r#"hl.dsp.focus({ workspace = "m-3", on_current_monitor = true, })"#,
+        ),
+        (Dispatch::FocusLast, r#"hl.dsp.focus({ last = true, })"#),
+        (
+            Dispatch::FocusUrgentOrLast,
+            r#"hl.dsp.focus({ urgent_or_last = true, })"#,
+        ),
+    ];
+    for (dispatch, lua) in dispatchers {
+        assert_eq!(dispatch.to_string(), lua);
+    }
 }
