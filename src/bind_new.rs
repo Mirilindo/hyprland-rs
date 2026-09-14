@@ -142,7 +142,7 @@ fn test_key_bindinds() {
                 dispatcher: Dispatch::FocusDirection(Direction::Up),
                 flags: vec![],
             },
-            r#"hl.bind("TAB"), hl.dsp.focus({ direction = "u", }), { })"#,
+            r#"hl.bind("TAB", hl.dsp.focus({ direction = "u", }), { })"#,
         ),
         (
             Binding {
@@ -151,7 +151,7 @@ fn test_key_bindinds() {
                 dispatcher: Dispatch::ExecCmd("ls -la".into(), None),
                 flags: vec![Flag::Description(r#"move"a""#.into()), Flag::AutoConsuming],
             },
-            r#"hl.bind("SUPER + SHIFT + 1"), hl.dsp.exec_cmd("ls -la"), { description = "move\"a\"", auto_consuming = true, })"#,
+            r#"hl.bind("SUPER + SHIFT + 1", hl.dsp.exec_cmd("ls -la"), { description = "move\"a\"", auto_consuming = true, })"#,
         ),
         (
             Binding {
@@ -160,7 +160,7 @@ fn test_key_bindinds() {
                 dispatcher: Dispatch::FocusLast,
                 flags: vec![],
             },
-            r#"hl.bind("ALT + tab"), hl.dsp.focus({ last }), { })"#,
+            r#"hl.bind("ALT + tab", hl.dsp.focus({ last = true, }), { })"#,
         ),
         (
             Binding {
@@ -169,7 +169,7 @@ fn test_key_bindinds() {
                 dispatcher: Dispatch::Exit,
                 flags: vec![],
             },
-            r#"hl.bind("ALT + tab"), hl.dsp.exit(), { })"#,
+            r#"hl.bind("ALT + tab", hl.dsp.exit(), { })"#,
         ),
         (
             Binding {
@@ -178,7 +178,7 @@ fn test_key_bindinds() {
                 dispatcher: Dispatch::SubMap("submap".into()),
                 flags: vec![],
             },
-            r#"hl.bind("ALT + tab"), hl.dsp.submap("submap"), { })"#,
+            r#"hl.bind("ALT + tab", hl.dsp.submap("submap"), { })"#,
         ),
         (
             Binding {
@@ -187,7 +187,7 @@ fn test_key_bindinds() {
                 dispatcher: Dispatch::Pass(None),
                 flags: vec![],
             },
-            r#"hl.bind("ALT + tab"), hl.dsp.pass({ }), { })"#,
+            r#"hl.bind("ALT + tab", hl.dsp.pass({ }), { })"#,
         ),
         (
             Binding {
@@ -198,7 +198,7 @@ fn test_key_bindinds() {
                 ))),
                 flags: vec![],
             },
-            r#"hl.bind("ALT + tab"), hl.dsp.pass({ window = "initialtitle:Proton P.*\\", }), { })"#,
+            r#"hl.bind("ALT + tab", hl.dsp.pass({ window = "initialtitle:Proton P.*\\", }), { })"#,
         ),
         (
             Binding {
@@ -207,7 +207,7 @@ fn test_key_bindinds() {
                 dispatcher: Dispatch::Event("test".into()),
                 flags: vec![],
             },
-            r#"hl.bind("ALT + tab"), hl.dsp.event("test"), { })"#,
+            r#"hl.bind("ALT + tab", hl.dsp.event("test"), { })"#,
         ),
         (
             Binding {
@@ -216,7 +216,7 @@ fn test_key_bindinds() {
                 dispatcher: Dispatch::ForceIdle(232323),
                 flags: vec![],
             },
-            r#"hl.bind("ALT + tab"), hl.dsp.force_idle(232323), { })"#,
+            r#"hl.bind("ALT + tab", hl.dsp.force_idle(232323), { })"#,
         ),
         (
             Binding {
@@ -225,7 +225,7 @@ fn test_key_bindinds() {
                 dispatcher: Dispatch::NoOp(),
                 flags: vec![],
             },
-            r#"hl.bind("ALT + tab"), hl.dsp.no_op(), { })"#,
+            r#"hl.bind("ALT + tab", hl.dsp.no_op(), { })"#,
         ),
     ];
     for (bind, lua) in binds {
