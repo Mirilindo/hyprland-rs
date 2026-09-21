@@ -17,6 +17,7 @@
 use crate::default_instance;
 use crate::dispatch::fmt::*;
 use crate::error::HyprError;
+use crate::lua::quote_string;
 use crate::shared::*;
 use derive_more::Display;
 use std::string::ToString;
@@ -430,10 +431,21 @@ pub enum SubmapParam<'a> {
 pub enum DispatchType<'a> {
     /// This lets you use dispatchers not supported by hyprland-rs yet, please make issues before
     /// using
+    ///
+    /// Both parts are sent as Lua, untouched and joined by a space: escape any string
+    /// they hold with [`crate::lua::quote_string`].
+    ///
+    /// ```
+    /// use hyprland::dispatch::DispatchType;
+    /// use hyprland::lua::quote_string;
+    ///
+    /// let args = format!("({{ workspace = 1, name = {} }})", quote_string("dev"));
+    /// let rename = DispatchType::Custom("hl.dsp.workspace.rename", &args);
+    /// ```
     Custom(
-        /// Name of event
+        /// The Lua function, like `hl.dsp.workspace.rename`
         &'a str,
-        /// Args
+        /// Its arguments, parentheses included
         &'a str,
     ),
     /// This dispatcher changes the current cursor
@@ -751,6 +763,50 @@ pub enum FloatValue {
     Exact(f32),
 }
 
+/// Builds the Lua form of a dispatcher, as Hyprland expects it since its config
+/// became Lua.
+///
+/// Returns [`None`] for the dispatchers that have no translation yet: the caller
+/// reports that instead of sending a legacy string that Hyprland would reject
+/// with a Lua parse error.
+///
+/// Window, monitor and workspace selectors are the very same strings in both
+/// syntaxes (`class:kitty`, `special:magic`, `m+1`, …), so their `Display` impls
+/// are reused; only the call around them changes. Every string goes through
+/// [`quote_string`], since a window title or a workspace name is picked by
+/// someone else than the caller.
+pub(crate) fn gen_lua_dispatch_str(cmd: &DispatchType) -> Option<String> {
+    use DispatchType::*;
+    let focus = |field: &str, value: &dyn std::fmt::Display| {
+        format!(
+            "hl.dsp.focus({{ {field} = {} }})",
+            quote_string(&value.to_string())
+        )
+    };
+    Some(match cmd {
+        // Passed through untouched: the caller wrote the Lua itself.
+        Custom(name, args) => format!("{name} {args}"),
+        Exec(sh) => format!("hl.dsp.exec_cmd({})", quote_string(sh)),
+        ExecRaw(sh) => format!("hl.dsp.exec_raw({})", quote_string(sh)),
+        Workspace(work) => focus("workspace", work),
+        FocusWindow(win) => focus("window", win),
+        FocusMonitor(mon) => focus("monitor", mon),
+        MoveFocus(dir) => focus("direction", dir),
+        _ => return None,
+    })
+}
+
+/// Wraps [`gen_lua_dispatch_str`] into a request, or reports the dispatchers
+/// that have no Lua form yet.
+fn gen_lua_dispatch_content(cmd: &DispatchType) -> crate::Result<CommandContent> {
+    match gen_lua_dispatch_str(cmd) {
+        Some(lua) => Ok(command!(JSON, "dispatch {lua}")),
+        None => Err(HyprError::NoLuaForm(format!("{cmd:?}"))),
+    }
+}
+
+/// Builds the legacy form of a dispatcher, still used to write keybinds.
+#[cfg(feature = "config")]
 pub(crate) fn gen_dispatch_str(cmd: DispatchType, dispatch: bool) -> crate::Result<CommandContent> {
     use DispatchType::*;
     let sep = if dispatch { " " } else { "," };
@@ -920,7 +976,7 @@ impl Dispatch {
         instance: &crate::instance::Instance,
         dispatch_type: DispatchType,
     ) -> crate::Result<()> {
-        let output = instance.write_to_socket(gen_dispatch_str(dispatch_type, true)?);
+        let output = instance.write_to_socket(gen_lua_dispatch_content(&dispatch_type)?);
         match output {
             Ok(msg) => match msg.as_str() {
                 "ok" => Ok(()),
@@ -965,7 +1021,7 @@ impl Dispatch {
         dispatch_type: DispatchType<'_>,
     ) -> crate::Result<()> {
         let output = instance
-            .write_to_socket_async(gen_dispatch_str(dispatch_type, true)?)
+            .write_to_socket_async(gen_lua_dispatch_content(&dispatch_type)?)
             .await;
         match output {
             Ok(msg) => match msg.as_str() {
@@ -1201,4 +1257,65 @@ mod tests {
             assert_eq!(generated.data, expected);
         }
     }
+}
+
+#[test]
+fn test_gen_lua_dispatch_str() {
+    use DispatchType::*;
+    let cases = vec![
+        (
+            Workspace(WorkspaceIdentifierWithSpecial::Id(5)),
+            r#"hl.dsp.focus({ workspace = "5" })"#,
+        ),
+        (
+            Workspace(WorkspaceIdentifierWithSpecial::Special(Some("magic"))),
+            r#"hl.dsp.focus({ workspace = "special:magic" })"#,
+        ),
+        (
+            Workspace(WorkspaceIdentifierWithSpecial::RelativeMonitor(-1)),
+            r#"hl.dsp.focus({ workspace = "m-1" })"#,
+        ),
+        (
+            FocusWindow(WindowIdentifier::ClassRegularExpression("kitty")),
+            r#"hl.dsp.focus({ window = "class:kitty" })"#,
+        ),
+        (
+            FocusMonitor(MonitorIdentifier::Current),
+            r#"hl.dsp.focus({ monitor = "current" })"#,
+        ),
+        (
+            MoveFocus(Direction::Left),
+            r#"hl.dsp.focus({ direction = "l" })"#,
+        ),
+        (Exec("kitty"), r#"hl.dsp.exec_cmd("kitty")"#),
+        (ExecRaw("kitty"), r#"hl.dsp.exec_raw("kitty")"#),
+        // A name holding a quote must not end the Lua string: the same escaping
+        // for every dispatcher, rather than one per consumer.
+        (
+            Workspace(WorkspaceIdentifierWithSpecial::Name(
+                r#"a" }) error("PROOF") --"#,
+            )),
+            r#"hl.dsp.focus({ workspace = "name:a\" }) error(\"PROOF\") --" })"#,
+        ),
+        (
+            FocusWindow(WindowIdentifier::Title("say \"hi\"\\\n")),
+            r#"hl.dsp.focus({ window = "title:say \"hi\"\\\n" })"#,
+        ),
+        // Raw Lua written by the caller goes through untouched.
+        (
+            Custom(
+                "hl.dsp.workspace.rename",
+                r#"({ workspace = 1, name = "x" })"#,
+            ),
+            r#"hl.dsp.workspace.rename ({ workspace = 1, name = "x" })"#,
+        ),
+    ];
+    for (dispatch, lua) in cases {
+        assert_eq!(gen_lua_dispatch_str(&dispatch).as_deref(), Some(lua));
+    }
+    // Not translated yet: the caller is told, rather than sent legacy syntax.
+    assert!(matches!(
+        gen_lua_dispatch_content(&ToggleFloating(None)),
+        Err(HyprError::NoLuaForm(_))
+    ));
 }

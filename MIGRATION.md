@@ -1,5 +1,16 @@
 # Migration Guide
 
+## `0.4.0-beta.3` ⟶ next
+Since 0.55 Hyprland can read its config as Lua, and on such a config a dispatcher is a Lua
+call. `Dispatch::call` now sends that Lua form, so it needs a Hyprland running a Lua
+config (`hyprland.lua`); Hyprland 0.57.0 removed the legacy syntax altogether.
+* Translated so far: `Workspace`, `FocusWindow`, `FocusMonitor`, `MoveFocus`, `Exec`,
+  `ExecRaw`. The other dispatchers return `HyprError::NoLuaForm` until they are.
+* `Custom(function, args)` is sent untouched as `function args`: write the Lua call,
+  for instance `Custom("hl.dsp.workspace.rename", r#"({ workspace = 1, name = "dev" })"#)`,
+  and escape the strings it holds with `hyprland::lua::quote_string`.
+* `HyprError` gains the `NoLuaForm` variant: an exhaustive `match` on it needs a new arm.
+
 ## `0.2.5` ⟶ `0.3.0`
 > This release is action packed so be prepared!
 

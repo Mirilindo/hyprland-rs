@@ -14,6 +14,12 @@ pub enum HyprError {
     /// Dispatcher returned non `ok` value
     #[display("A dispatcher returned a non-`ok`, value which is probably an error: {_0}")]
     NotOkDispatch(String),
+    /// Dispatcher has no Lua form in this crate yet
+    #[display(
+        "{_0} has no Lua form in hyprland-rs yet. \
+         Until it does, `DispatchType::Custom` can carry the Lua call."
+    )]
+    NoLuaForm(String),
     /// Error when interacting with Hyprpaper.
     #[cfg(feature = "hyprpaper")]
     Hyprpaper(crate::hyprpaper::Error),
@@ -38,6 +44,7 @@ impl HyprError {
             Self::IoError(_) => Err(self),
             Self::FromUtf8Error(e) => Ok(Self::FromUtf8Error(e.clone())),
             Self::NotOkDispatch(s) => Ok(Self::NotOkDispatch(s.clone())),
+            Self::NoLuaForm(s) => Ok(Self::NoLuaForm(s.clone())),
             Self::InvalidHyprColorFormat => Ok(Self::InvalidHyprColorFormat),
             Self::InvalidHyprGradiantFormat => Ok(Self::InvalidHyprGradiantFormat),
             #[cfg(feature = "hyprpaper")]
