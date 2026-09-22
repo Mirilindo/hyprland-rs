@@ -5,7 +5,15 @@ Since 0.55 Hyprland can read its config as Lua, and on such a config a dispatche
 call. `Dispatch::call` now sends that Lua form, so it needs a Hyprland running a Lua
 config (`hyprland.lua`); Hyprland 0.57.0 removed the legacy syntax altogether.
 * Translated so far: `Workspace`, `FocusWindow`, `FocusMonitor`, `MoveFocus`, `Exec`,
-  `ExecRaw`. The other dispatchers return `HyprError::NoLuaForm` until they are.
+  `ExecRaw`, `KillActiveWindow`, `ForceKillActiveWindow`, `CloseWindow`,
+  `MoveToWorkspace`, `MoveToWorkspaceSilent`, `ToggleFloating`, `SetFloating`, `SetTiled`,
+  `TogglePin`, `TogglePinWindow`, `ToggleFullscreen`, `ResizeActive`, `MoveActive`,
+  `ResizeWindowPixel`, `MoveWindowPixel`, `BringActiveToTop`, `MoveCursor`,
+  `RenameWorkspace`, `MoveCurrentWorkspaceToMonitor`, `MoveWorkspaceToMonitor`,
+  `SwapActiveWorkspaces` and `ToggleSpecialWorkspace`. The other dispatchers return
+  `HyprError::NoLuaForm` until they are.
+* A `Position` given as a fraction (`DeltaFraction`, `ExactFraction`) has no Lua form:
+  Hyprland takes plain numbers there, so those also return `HyprError::NoLuaForm`.
 * `Custom(function, args)` is sent untouched as `function args`: write the Lua call,
   for instance `Custom("hl.dsp.workspace.rename", r#"({ workspace = 1, name = "dev" })"#)`,
   and escape the strings it holds with `hyprland::lua::quote_string`.

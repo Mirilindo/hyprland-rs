@@ -777,23 +777,121 @@ pub enum FloatValue {
 /// someone else than the caller.
 pub(crate) fn gen_lua_dispatch_str(cmd: &DispatchType) -> Option<String> {
     use DispatchType::*;
-    let focus = |field: &str, value: &dyn std::fmt::Display| {
-        format!(
-            "hl.dsp.focus({{ {field} = {} }})",
-            quote_string(&value.to_string())
-        )
+    let quote = |value: &dyn std::fmt::Display| quote_string(&value.to_string());
+    let window = |win: &Option<WindowIdentifier>| win.as_ref().map(|w| ("window", quote(w)));
+    let toggle = |func: &str, action: Option<&str>, win: &Option<WindowIdentifier>| {
+        let action = action.map(|a| ("action", quote_string(a)));
+        lua_call(func, action.into_iter().chain(window(win)))
     };
     Some(match cmd {
         // Passed through untouched: the caller wrote the Lua itself.
         Custom(name, args) => format!("{name} {args}"),
         Exec(sh) => format!("hl.dsp.exec_cmd({})", quote_string(sh)),
         ExecRaw(sh) => format!("hl.dsp.exec_raw({})", quote_string(sh)),
-        Workspace(work) => focus("workspace", work),
-        FocusWindow(win) => focus("window", win),
-        FocusMonitor(mon) => focus("monitor", mon),
-        MoveFocus(dir) => focus("direction", dir),
+        Workspace(work) => lua_call("focus", [("workspace", quote(work))]),
+        FocusWindow(win) => lua_call("focus", [("window", quote(win))]),
+        FocusMonitor(mon) => lua_call("focus", [("monitor", quote(mon))]),
+        MoveFocus(dir) => lua_call("focus", [("direction", quote(dir))]),
+
+        // `killactive` has always closed the window politely; the forceful one
+        // is `forcekillactive`.
+        KillActiveWindow => lua_call("window.close", []),
+        ForceKillActiveWindow => lua_call("window.kill", []),
+        CloseWindow(win) => lua_call("window.close", [("window", quote(win))]),
+        MoveToWorkspace(work, win) => lua_call(
+            "window.move",
+            [("workspace", quote(work))].into_iter().chain(window(win)),
+        ),
+        MoveToWorkspaceSilent(work, win) => lua_call(
+            "window.move",
+            [("workspace", quote(work)), ("follow", "false".to_string())]
+                .into_iter()
+                .chain(window(win)),
+        ),
+        // Hyprland reads `enable`/`disable`, and silently toggles on anything else.
+        ToggleFloating(win) => toggle("window.float", None, win),
+        SetFloating(win) => toggle("window.float", Some("enable"), win),
+        SetTiled(win) => toggle("window.float", Some("disable"), win),
+        TogglePin => lua_call("window.pin", []),
+        TogglePinWindow(win) => lua_call("window.pin", [("window", quote(win))]),
+        ToggleFullscreen(FullscreenType::Real) => {
+            lua_call("window.fullscreen", [("mode", quote_string("fullscreen"))])
+        }
+        ToggleFullscreen(FullscreenType::Maximize) => {
+            lua_call("window.fullscreen", [("mode", quote_string("maximized"))])
+        }
+        ToggleFullscreen(FullscreenType::NoParam) => lua_call("window.fullscreen", []),
+        ResizeActive(pos) => lua_call("window.resize", lua_position(pos)?),
+        MoveActive(pos) => lua_call("window.move", lua_position(pos)?),
+        ResizeWindowPixel(pos, win) => lua_call(
+            "window.resize",
+            lua_position(pos)?.chain([("window", quote(win))]),
+        ),
+        MoveWindowPixel(pos, win) => lua_call(
+            "window.move",
+            lua_position(pos)?.chain([("window", quote(win))]),
+        ),
+        BringActiveToTop => lua_call("window.bring_to_top", []),
+        MoveCursor(x, y) => lua_call("cursor.move", [("x", x.to_string()), ("y", y.to_string())]),
+
+        // Hyprland looks the workspace up by this string, and reads a number as
+        // an id. On Hyprland 0.57 an id is unsigned, so a negative one matches
+        // no workspace, and a special workspace cannot be renamed.
+        // Without a name, this crate's legacy form sent the id as the name:
+        // kept as is.
+        RenameWorkspace(id, name) => lua_call(
+            "workspace.rename",
+            [
+                ("workspace", quote(id)),
+                ("name", quote_string(name.unwrap_or(&id.to_string()))),
+            ],
+        ),
+        MoveCurrentWorkspaceToMonitor(mon) => lua_call("workspace.move", [("monitor", quote(mon))]),
+        MoveWorkspaceToMonitor(work, mon) => lua_call(
+            "workspace.move",
+            [("workspace", quote(work)), ("monitor", quote(mon))],
+        ),
+        SwapActiveWorkspaces(mon, mon2) => lua_call(
+            "workspace.swap_monitors",
+            [("monitor1", quote(mon)), ("monitor2", quote(mon2))],
+        ),
+        // Hyprland adds the `special:` prefix itself, as its legacy dispatcher did.
+        ToggleSpecialWorkspace(Some(name)) => {
+            format!("hl.dsp.workspace.toggle_special({})", quote_string(name))
+        }
+        ToggleSpecialWorkspace(None) => "hl.dsp.workspace.toggle_special()".to_string(),
         _ => return None,
     })
+}
+
+/// Writes `hl.dsp.<func>({ field = value, … })`, or `hl.dsp.<func>()` without
+/// fields. The values are Lua expressions, already quoted where needed.
+fn lua_call(func: &str, fields: impl IntoIterator<Item = (&'static str, String)>) -> String {
+    let fields: Vec<String> = fields
+        .into_iter()
+        .map(|(key, value)| format!("{key} = {value}"))
+        .collect();
+    if fields.is_empty() {
+        format!("hl.dsp.{func}()")
+    } else {
+        format!("hl.dsp.{func}({{ {} }})", fields.join(", "))
+    }
+}
+
+/// The `x`, `y` and `relative` fields of a move or a resize. Hyprland takes
+/// plain numbers there, so the fractions (`50%`) have no Lua form.
+fn lua_position(pos: &Position) -> Option<impl Iterator<Item = (&'static str, String)>> {
+    let (x, y, relative) = match pos {
+        Position::Delta(x, y) => (x, y, true),
+        Position::Exact(x, y) => (x, y, false),
+        Position::DeltaFraction(..) | Position::ExactFraction(..) => return None,
+    };
+    let relative = relative.then(|| ("relative", "true".to_string()));
+    Some(
+        [("x", x.to_string()), ("y", y.to_string())]
+            .into_iter()
+            .chain(relative),
+    )
 }
 
 /// Wraps [`gen_lua_dispatch_str`] into a request, or reports the dispatchers
@@ -1309,13 +1407,118 @@ fn test_gen_lua_dispatch_str() {
             ),
             r#"hl.dsp.workspace.rename ({ workspace = 1, name = "x" })"#,
         ),
+        (KillActiveWindow, "hl.dsp.window.close()"),
+        (ForceKillActiveWindow, "hl.dsp.window.kill()"),
+        (
+            CloseWindow(WindowIdentifier::ProcessId(42)),
+            r#"hl.dsp.window.close({ window = "pid:42" })"#,
+        ),
+        (
+            MoveToWorkspace(WorkspaceIdentifierWithSpecial::Id(3), None),
+            r#"hl.dsp.window.move({ workspace = "3" })"#,
+        ),
+        (
+            MoveToWorkspaceSilent(
+                WorkspaceIdentifierWithSpecial::Special(Some("magic")),
+                Some(WindowIdentifier::ClassRegularExpression("kitty")),
+            ),
+            r#"hl.dsp.window.move({ workspace = "special:magic", follow = false, window = "class:kitty" })"#,
+        ),
+        (ToggleFloating(None), "hl.dsp.window.float()"),
+        (
+            ToggleFloating(Some(WindowIdentifier::Tiled)),
+            r#"hl.dsp.window.float({ window = "tiled" })"#,
+        ),
+        (
+            SetFloating(None),
+            r#"hl.dsp.window.float({ action = "enable" })"#,
+        ),
+        (
+            SetTiled(Some(WindowIdentifier::Floating)),
+            r#"hl.dsp.window.float({ action = "disable", window = "floating" })"#,
+        ),
+        (TogglePin, "hl.dsp.window.pin()"),
+        (
+            TogglePinWindow(WindowIdentifier::Title("x")),
+            r#"hl.dsp.window.pin({ window = "title:x" })"#,
+        ),
+        (
+            ToggleFullscreen(FullscreenType::Real),
+            r#"hl.dsp.window.fullscreen({ mode = "fullscreen" })"#,
+        ),
+        (
+            ToggleFullscreen(FullscreenType::Maximize),
+            r#"hl.dsp.window.fullscreen({ mode = "maximized" })"#,
+        ),
+        (
+            ToggleFullscreen(FullscreenType::NoParam),
+            "hl.dsp.window.fullscreen()",
+        ),
+        (
+            ResizeActive(Position::Delta(10, -20)),
+            "hl.dsp.window.resize({ x = 10, y = -20, relative = true })",
+        ),
+        (
+            MoveActive(Position::Exact(100, 200)),
+            "hl.dsp.window.move({ x = 100, y = 200 })",
+        ),
+        (
+            ResizeWindowPixel(Position::Exact(640, 480), WindowIdentifier::Tiled),
+            r#"hl.dsp.window.resize({ x = 640, y = 480, window = "tiled" })"#,
+        ),
+        (
+            MoveWindowPixel(Position::Delta(-5, 5), WindowIdentifier::Floating),
+            r#"hl.dsp.window.move({ x = -5, y = 5, relative = true, window = "floating" })"#,
+        ),
+        (BringActiveToTop, "hl.dsp.window.bring_to_top()"),
+        (
+            MoveCursor(-1, 1080),
+            "hl.dsp.cursor.move({ x = -1, y = 1080 })",
+        ),
+        // The new name is escaped like any other string.
+        (
+            RenameWorkspace(3, Some(r#"dev "x""#)),
+            r#"hl.dsp.workspace.rename({ workspace = "3", name = "dev \"x\"" })"#,
+        ),
+        (
+            RenameWorkspace(2, None),
+            r#"hl.dsp.workspace.rename({ workspace = "2", name = "2" })"#,
+        ),
+        (
+            MoveCurrentWorkspaceToMonitor(MonitorIdentifier::Name("DP-1")),
+            r#"hl.dsp.workspace.move({ monitor = "DP-1" })"#,
+        ),
+        (
+            MoveWorkspaceToMonitor(
+                WorkspaceIdentifier::Id(4),
+                MonitorIdentifier::Direction(Direction::Right),
+            ),
+            r#"hl.dsp.workspace.move({ workspace = "4", monitor = "r" })"#,
+        ),
+        (
+            SwapActiveWorkspaces(MonitorIdentifier::Id(0), MonitorIdentifier::Relative(1)),
+            r#"hl.dsp.workspace.swap_monitors({ monitor1 = "0", monitor2 = "+1" })"#,
+        ),
+        (
+            ToggleSpecialWorkspace(Some("magic".to_string())),
+            r#"hl.dsp.workspace.toggle_special("magic")"#,
+        ),
+        (
+            ToggleSpecialWorkspace(None),
+            "hl.dsp.workspace.toggle_special()",
+        ),
     ];
     for (dispatch, lua) in cases {
         assert_eq!(gen_lua_dispatch_str(&dispatch).as_deref(), Some(lua));
     }
     // Not translated yet: the caller is told, rather than sent legacy syntax.
     assert!(matches!(
-        gen_lua_dispatch_content(&ToggleFloating(None)),
+        gen_lua_dispatch_content(&ToggleFakeFullscreen),
         Err(HyprError::NoLuaForm(_))
     ));
+    // Hyprland takes plain numbers: a fraction has no Lua form.
+    assert_eq!(
+        gen_lua_dispatch_str(&ResizeActive(Position::DeltaFraction(10, 10))),
+        None
+    );
 }
