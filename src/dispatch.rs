@@ -99,16 +99,16 @@ pub enum Direction {
 #[derive(Debug, Clone, Display)]
 pub enum Position {
     /// A delta in pixels
-    #[display("{_0} {_0}")]
+    #[display("{_0} {_1}")]
     Delta(i16, i16),
     /// The exact size in pixels
-    #[display("exact {_0} {_0}")]
+    #[display("exact {_0} {_1}")]
     Exact(i16, i16),
     /// A delta in window fraction
-    #[display("{_0}% {_0}%")]
+    #[display("{_0}% {_1}%")]
     DeltaFraction(i16, i16),
     /// The exact size in screen fraction
-    #[display("exact {_0}% {_0}%")]
+    #[display("exact {_0}% {_1}%")]
     ExactFraction(i16, i16),
 }
 
