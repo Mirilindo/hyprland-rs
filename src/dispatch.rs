@@ -176,10 +176,10 @@ pub enum Corner {
 #[derive(Debug, Clone, Display)]
 pub enum WorkspaceOptions {
     /// Makes all windows pseudo tiled
-    #[display("allfloat")]
+    #[display("allpseudo")]
     AllPseudo,
     /// Makes all windows float
-    #[display("allpseudo")]
+    #[display("allfloat")]
     AllFloat,
 }
 
