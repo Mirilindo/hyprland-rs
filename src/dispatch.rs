@@ -14,6 +14,7 @@
 //! }
 //! ```
 
+use crate::config_mode::ConfigMode;
 use crate::default_instance;
 use crate::dispatch::fmt::*;
 use crate::error::HyprError;
@@ -432,8 +433,9 @@ pub enum DispatchType<'a> {
     /// This lets you use dispatchers not supported by hyprland-rs yet, please make issues before
     /// using
     ///
-    /// Both parts are sent as Lua, untouched and joined by a space: escape any string
-    /// they hold with [`crate::lua::quote_string`].
+    /// Both parts are sent untouched, joined by a space. On a Lua config they must be
+    /// a Lua call: escape any string it holds with [`crate::lua::quote_string`]. On a
+    /// legacy config they are the legacy dispatcher and its arguments.
     ///
     /// ```
     /// use hyprland::dispatch::DispatchType;
@@ -443,9 +445,9 @@ pub enum DispatchType<'a> {
     /// let rename = DispatchType::Custom("hl.dsp.workspace.rename", &args);
     /// ```
     Custom(
-        /// The Lua function, like `hl.dsp.workspace.rename`
+        /// The Lua function, like `hl.dsp.workspace.rename` (or the legacy dispatcher)
         &'a str,
-        /// Its arguments, parentheses included
+        /// Its arguments, parentheses included on a Lua config
         &'a str,
     ),
     /// This dispatcher changes the current cursor
@@ -763,8 +765,7 @@ pub enum FloatValue {
     Exact(f32),
 }
 
-/// Builds the Lua form of a dispatcher, as Hyprland expects it since its config
-/// became Lua.
+/// Builds the Lua form of a dispatcher, as Hyprland expects it on a Lua config.
 ///
 /// Returns [`None`] for the dispatchers that have no translation yet: the caller
 /// reports that instead of sending a legacy string that Hyprland would reject
@@ -903,8 +904,19 @@ fn gen_lua_dispatch_content(cmd: &DispatchType) -> crate::Result<CommandContent>
     }
 }
 
-/// Builds the legacy form of a dispatcher, still used to write keybinds.
-#[cfg(feature = "config")]
+/// Builds the request for a dispatcher, in the syntax that the config parser
+/// of the instance reads.
+fn gen_dispatch_content(mode: ConfigMode, cmd: DispatchType) -> crate::Result<CommandContent> {
+    match (mode, &cmd) {
+        // Not a dispatcher: `setcursor` is a request of its own, the same in
+        // both modes.
+        (_, DispatchType::SetCursor(..)) | (ConfigMode::Legacy, _) => gen_dispatch_str(cmd, true),
+        (ConfigMode::Lua, _) => gen_lua_dispatch_content(&cmd),
+    }
+}
+
+/// Builds the legacy form of a dispatcher: sent to an instance on a legacy
+/// config, and used to write keybinds.
 pub(crate) fn gen_dispatch_str(cmd: DispatchType, dispatch: bool) -> crate::Result<CommandContent> {
     use DispatchType::*;
     let sep = if dispatch { " " } else { "," };
@@ -1074,7 +1086,8 @@ impl Dispatch {
         instance: &crate::instance::Instance,
         dispatch_type: DispatchType,
     ) -> crate::Result<()> {
-        let output = instance.write_to_socket(gen_lua_dispatch_content(&dispatch_type)?);
+        let content = gen_dispatch_content(instance.config_mode()?, dispatch_type)?;
+        let output = instance.write_to_socket(content);
         match output {
             Ok(msg) => match msg.as_str() {
                 "ok" => Ok(()),
@@ -1118,9 +1131,8 @@ impl Dispatch {
         instance: &crate::instance::Instance,
         dispatch_type: DispatchType<'_>,
     ) -> crate::Result<()> {
-        let output = instance
-            .write_to_socket_async(gen_lua_dispatch_content(&dispatch_type)?)
-            .await;
+        let content = gen_dispatch_content(instance.config_mode_async().await?, dispatch_type)?;
+        let output = instance.write_to_socket_async(content).await;
         match output {
             Ok(msg) => match msg.as_str() {
                 "ok" => Ok(()),
@@ -1521,4 +1533,12 @@ fn test_gen_lua_dispatch_str() {
         gen_lua_dispatch_str(&ResizeActive(Position::DeltaFraction(10, 10))),
         None
     );
+    // `setcursor` is not a dispatcher: the same request in both modes.
+    for mode in [ConfigMode::Lua, ConfigMode::Legacy] {
+        let content = gen_dispatch_content(mode, SetCursor("Bibata", 24));
+        assert_eq!(
+            content.map(|c| c.data).ok().as_deref(),
+            Some("setcursor Bibata 24")
+        );
+    }
 }

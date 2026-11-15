@@ -1,6 +1,8 @@
+use crate::config_mode::{ConfigMode, status_command};
 use crate::error::hypr_err;
 use crate::shared::{CommandContent, get_hypr_path};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
 /// This is the sync version of the Hyprland Instance.
 /// It holds the event streams connected to the sockets of one running Hyprland instance.
@@ -15,6 +17,8 @@ pub struct Instance {
     /// .socket2.sock
     #[cfg(feature = "listener")]
     event_socket_path: Box<Path>,
+    /// The config parser of this instance, asked once and shared between clones
+    config_mode: Arc<OnceLock<ConfigMode>>,
 }
 
 impl PartialEq<Self> for Instance {
@@ -58,7 +62,38 @@ impl Instance {
             event_socket_path: path.join(".socket2.sock").into_boxed_path(),
             #[cfg(feature = "hyprpaper")]
             hyprpaper_stream: path.join(".hyprpaper.sock").into_boxed_path(),
+            config_mode: Arc::default(),
         })
+    }
+
+    /// Tells which config parser this Hyprland instance runs.
+    ///
+    /// The first call asks Hyprland (the `status` request, which only reads
+    /// state); the answer is then cached, and shared with the clones of this
+    /// [`Instance`]. A failed request is not cached. See
+    /// [`crate::config_mode`] for the one case that outdates the cache.
+    pub fn config_mode(&self) -> crate::Result<ConfigMode> {
+        if let Some(mode) = self.config_mode.get() {
+            return Ok(*mode);
+        }
+        let response = self.write_to_socket(status_command())?;
+        Ok(*self
+            .config_mode
+            .get_or_init(|| ConfigMode::from_status_response(&response)))
+    }
+
+    /// Tells which config parser this Hyprland instance runs (async).
+    ///
+    /// See [`Instance::config_mode`].
+    #[cfg(any(feature = "async-lite", feature = "tokio"))]
+    pub async fn config_mode_async(&self) -> crate::Result<ConfigMode> {
+        if let Some(mode) = self.config_mode.get() {
+            return Ok(*mode);
+        }
+        let response = self.write_to_socket_async(status_command()).await?;
+        Ok(*self
+            .config_mode
+            .get_or_init(|| ConfigMode::from_status_response(&response)))
     }
 }
 

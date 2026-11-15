@@ -2,20 +2,26 @@
 
 ## `0.4.0-beta.3` ⟶ next
 Since 0.55 Hyprland can read its config as Lua, and on such a config a dispatcher is a Lua
-call. `Dispatch::call` now sends that Lua form, so it needs a Hyprland running a Lua
-config (`hyprland.lua`); Hyprland 0.57.0 removed the legacy syntax altogether.
-* Translated so far: `Workspace`, `FocusWindow`, `FocusMonitor`, `MoveFocus`, `Exec`,
-  `ExecRaw`, `KillActiveWindow`, `ForceKillActiveWindow`, `CloseWindow`,
+call; Hyprland 0.57.0 removed the legacy syntax altogether. `Dispatch::call` now asks the
+instance which config parser it runs (`configProvider` of the `status` request, asked once
+per `Instance`) and sends the Lua form on a Lua config, the legacy form otherwise.
+`Instance::config_mode` gives the answer.
+* On a legacy config (`hyprland.conf`, Hyprland 0.56 or older) nothing changes.
+* On a Lua config, translated so far: `Workspace`, `FocusWindow`, `FocusMonitor`,
+  `MoveFocus`, `Exec`, `ExecRaw`, `KillActiveWindow`, `ForceKillActiveWindow`, `CloseWindow`,
   `MoveToWorkspace`, `MoveToWorkspaceSilent`, `ToggleFloating`, `SetFloating`, `SetTiled`,
   `TogglePin`, `TogglePinWindow`, `ToggleFullscreen`, `ResizeActive`, `MoveActive`,
   `ResizeWindowPixel`, `MoveWindowPixel`, `BringActiveToTop`, `MoveCursor`,
   `RenameWorkspace`, `MoveCurrentWorkspaceToMonitor`, `MoveWorkspaceToMonitor`,
   `SwapActiveWorkspaces` and `ToggleSpecialWorkspace`. The other dispatchers return
-  `HyprError::NoLuaForm` until they are.
-* A `Position` given as a fraction (`DeltaFraction`, `ExactFraction`) has no Lua form:
-  Hyprland takes plain numbers there, so those also return `HyprError::NoLuaForm`.
-* `Custom(function, args)` is sent untouched as `function args`: write the Lua call,
-  for instance `Custom("hl.dsp.workspace.rename", r#"({ workspace = 1, name = "dev" })"#)`,
+  `HyprError::NoLuaForm` until they are (`SetCursor` aside: it is a request of its own,
+  the same in both modes).
+* On a Lua config, a `Position` given as a fraction (`DeltaFraction`, `ExactFraction`) has
+  no Lua form: Hyprland takes plain numbers there, so those also return
+  `HyprError::NoLuaForm`.
+* `Custom(function, args)` is sent untouched as `function args` in both modes: on a Lua
+  config, write the Lua call, for instance
+  `Custom("hl.dsp.workspace.rename", r#"({ workspace = 1, name = "dev" })"#)`,
   and escape the strings it holds with `hyprland::lua::quote_string`.
 * `HyprError` gains the `NoLuaForm` variant: an exhaustive `match` on it needs a new arm.
 

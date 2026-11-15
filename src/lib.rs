@@ -52,6 +52,9 @@ pub mod error;
 /// This module provides helpers to escape strings for Hyprland's Lua config
 pub mod lua;
 
+/// This module tells which config parser a Hyprland instance runs (Lua or legacy)
+pub mod config_mode;
+
 /// Encoding helpers used internally by the crate
 mod encoding;
 
